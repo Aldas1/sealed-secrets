@@ -476,6 +476,9 @@ func (c *Controller) updateSealedSecretStatus(ctx context.Context, ssecret *ssv1
 	}
 
 	updatedRequired := updateSealedSecretsStatusConditions(ssecret.Status, unsealError)
+	if updateRotationCondition(ssecret.Status, isRotationNeeded(ssecret)) {
+		updatedRequired = true
+	}
 	if updatedRequired || (ssecret.Status.ObservedGeneration != ssecret.ObjectMeta.Generation) {
 		ssecret.Status.ObservedGeneration = ssecret.ObjectMeta.Generation
 		_, err := c.ssclient.SealedSecrets(ssecret.GetObjectMeta().GetNamespace()).UpdateStatus(ctx, ssecret, metav1.UpdateOptions{})

@@ -35,6 +35,9 @@ const (
 	// SealedSecretSkipSetOwnerReferencesAnnotation is the name for the annotation for
 	// flagging the controller not to set owner reference to secret.
 	SealedSecretSkipSetOwnerReferencesAnnotation = annoNs + "skip-set-owner-references"
+
+	// SealedSecretRotationNeeded means the SealedSecret is stale and needs a rotation (re-encryption).
+	SealedSecretRotationNeeded SealedSecretConditionType = "RotationNeeded"
 )
 
 // SecretTemplateSpec describes the structure a Secret should have
@@ -64,6 +67,18 @@ type SecretTemplateSpec struct {
 	Data map[string]string `json:"data,omitempty"`
 }
 
+// SealedSecretRotationPolicySpec defines the rotation policy for the secret.
+type SealedSecretRotationPolicySpec struct {
+	// Enabled defines if the secret should be automatically rotated (or alerted on).
+	// +optional
+	Enabled bool `json:"enabled"`
+
+	// Schedule is a Cron-style string defining when the rotation should happen.
+	// Example: "0 0 1 * *" (Monthly)
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
+}
+
 // SealedSecretSpec is the specification of a SealedSecret.
 type SealedSecretSpec struct {
 	// Template defines the structure of the Secret that will be
@@ -74,6 +89,10 @@ type SealedSecretSpec struct {
 	// Data is deprecated and will be removed eventually. Use per-value EncryptedData instead.
 	Data          []byte                    `json:"data,omitempty"`
 	EncryptedData SealedSecretEncryptedData `json:"encryptedData"`
+
+	// Rotation defines the rotation policy for this secret.
+	// +optional
+	Rotation *SealedSecretRotationPolicySpec `json:"rotation,omitempty"`
 }
 
 // +kubebuilder:pruning:PreserveUnknownFields

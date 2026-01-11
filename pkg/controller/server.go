@@ -68,6 +68,10 @@ func httpserver(cp certProvider, sc secretChecker, sr secretRotator, burst int, 
 		}
 	}))))
 
+	mux.Handle("/v1/admission", Instrument("/v1/admission", httpRateLimiter.RateLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		HandleAdmission(sc, w, r)
+	}))))
+
 	// TODO(mkm): rename to re-encrypt
 	mux.Handle("/v1/rotate", Instrument("/v1/rotate", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		content, err := io.ReadAll(r.Body)

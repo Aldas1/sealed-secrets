@@ -33,6 +33,18 @@ openAPIV3Schema:
             type: string
           type: object
           x-kubernetes-preserve-unknown-fields: true
+        rotation:
+          description: Rotation defines the rotation policy for this secret.
+          properties:
+            enabled:
+              description: Enabled defines if the secret should be automatically rotated (or alerted on).
+              type: boolean
+            schedule:
+              description: |-
+                Schedule is a Cron-style string defining when the rotation should happen.
+                Example: "0 0 1 * *" (Monthly)
+              type: string
+          type: object
         template:
           description: |-
             Template defines the structure of the Secret that will be
