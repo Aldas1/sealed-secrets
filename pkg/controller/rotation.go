@@ -5,6 +5,7 @@ import (
 	"time"
 
 	ssv1alpha1 "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealedsecrets/v1alpha1"
+	"github.com/robfig/cron/v3"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -15,41 +16,21 @@ func isRotationNeeded(ssecret *ssv1alpha1.SealedSecret) bool {
 		return false
 	}
 
-	// 1. Get the last time it was successfully unsealed/updated.
 	lastUnsealTime := getLastUnsealTime(ssecret)
 	if lastUnsealTime.IsZero() {
-		// If never unsealed, or status unknown, assume it's fresh enough or not ready.
-		// Fallback to creation timestamp
 		lastUnsealTime = ssecret.CreationTimestamp.Time
 	}
 
-	// 2. Parse Schedule (Simplistic implementation for coursework)
-	// Supports: "0 0 1 * *" (Monthly -> 30 days)
-	//           "@monthly" (Monthly -> 30 days)
-	//           "30d" (30 days)
-	schedule := ssecret.Spec.Rotation.Schedule
-	var period time.Duration
-
-	switch schedule {
-	case "0 0 1 * *", "@monthly", "monthly":
-		period = 30 * 24 * time.Hour
-	case "7d", "@weekly":
-		period = 7 * 24 * time.Hour
-	// Add more simplified cases if needed
-	default:
-		// Default to 30 days if unknown string, or log warning
-		// For safety in this demo, we can just return false if we don't understand the schedule
-		slog.Warn("Unknown rotation schedule string, ignoring", "schedule", schedule, "name", ssecret.Name)
+	sched, err := cron.ParseStandard(ssecret.Spec.Rotation.Schedule)
+	if err != nil {
+		slog.Warn("Unknown rotation schedule string, ignoring", "schedule", ssecret.Spec.Rotation.Schedule, "name", ssecret.Name)
 		return false
 	}
 
-	// 3. Check if time has passed
-	cutoff := lastUnsealTime.Add(period)
-	if time.Now().After(cutoff) {
-		slog.Info("Rotation needed", "name", ssecret.Name, "lastUnseal", lastUnsealTime, "schedule", schedule)
+	if time.Now().After(sched.Next(lastUnsealTime)) {
+		slog.Info("Rotation needed", "name", ssecret.Name, "lastUnseal", lastUnsealTime, "schedule", ssecret.Spec.Rotation.Schedule)
 		return true
 	}
-
 	return false
 }
 

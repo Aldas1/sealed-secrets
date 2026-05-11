@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,8 +11,10 @@ import (
 
 	ssv1alpha1 "github.com/bitnami-labs/sealed-secrets/pkg/apis/sealedsecrets/v1alpha1"
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	runtimeserializer "k8s.io/apimachinery/pkg/runtime/serializer"
 )
 
 func TestHandleAdmission(t *testing.T) {
@@ -114,4 +117,82 @@ func TestHandleAdmission(t *testing.T) {
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[0:len(substr)] == substr // simplistic
+}
+
+// TestHandleAdmission_WrongNamespace seals a secret for namespace "prod", then submits
+// the same ciphertext with namespace changed to "staging" and expects rejection.
+func TestHandleAdmission_WrongNamespace(t *testing.T) {
+	rng := testRand()
+
+	privKey, err := rsa.GenerateKey(rng, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	plainSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-secret",
+			Namespace: "prod",
+		},
+		Data: map[string][]byte{"password": []byte("s3cr3t")},
+	}
+
+	sealedSecret, err := ssv1alpha1.NewSealedSecret(runtimeserializer.CodecFactory{}, &privKey.PublicKey, plainSecret)
+	if err != nil {
+		t.Fatalf("NewSealedSecret: %v", err)
+	}
+
+	// Tamper: move the sealed secret into a different namespace.
+	sealedSecret.Namespace = "staging"
+
+	checker := func(content []byte) (bool, error) {
+		var ss ssv1alpha1.SealedSecret
+		if err := json.Unmarshal(content, &ss); err != nil {
+			return false, err
+		}
+		privKeys := map[string]*rsa.PrivateKey{"test-key": privKey}
+		_, err := ss.Unseal(runtimeserializer.CodecFactory{}, privKeys)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	sealedJSON, err := json.Marshal(sealedSecret)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	ar := admissionv1.AdmissionReview{
+		Request: &admissionv1.AdmissionRequest{
+			UID: "wrong-ns-test",
+			Kind: metav1.GroupVersionKind{
+				Group: ssv1alpha1.GroupName,
+				Kind:  "SealedSecret",
+			},
+			Object: runtime.RawExtension{Raw: sealedJSON},
+		},
+	}
+	reqBody, _ := json.Marshal(ar)
+	req := httptest.NewRequest("POST", "/v1/admission", bytes.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	HandleAdmission(checker, w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected HTTP 200, got %d", resp.StatusCode)
+	}
+
+	var arm admissionv1.AdmissionReview
+	if err := json.NewDecoder(resp.Body).Decode(&arm); err != nil {
+		t.Fatalf("Decode response: %v", err)
+	}
+
+	if arm.Response.Allowed {
+		t.Error("expected admission denied for wrong-namespace sealed secret, got allowed=true")
+	}
+	if arm.Response.Result == nil || arm.Response.Result.Message == "" {
+		t.Error("expected a non-empty rejection message")
+	}
 }
